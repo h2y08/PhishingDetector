@@ -1,0 +1,8 @@
+PyQt5
+ultralytics
+selenium
+webdriver-manager
+pyttsx3
+beautifulsoup4
+requests
+pillow
