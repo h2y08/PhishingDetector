@@ -150,7 +150,7 @@ class MultiModalDetector:
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--ignore-certificate-errors')
             options.add_argument(
-                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (HTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
+                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
 
             driver = webdriver.Chrome(options=options)
             driver.set_page_load_timeout(15)
@@ -261,7 +261,7 @@ class PhishingDetectorApp(QMainWindow):
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--ignore-certificate-errors')
             options.add_argument(
-                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (HTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
+                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
 
             driver = webdriver.Chrome(options=options)
             driver.set_page_load_timeout(15)
