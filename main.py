@@ -183,18 +183,17 @@ class MultiModalDetector:
     def detect(self, url: str):
         try:
             options = Options()
-            # options.add_argument('--headless') # 已恢复弹出浏览器窗口
+            # options.add_argument('--headless')   # 保持弹出浏览器
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--ignore-certificate-errors')
-            options.add_argument(
-                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
+            options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36')
 
             driver = webdriver.Chrome(options=options)
-            driver.set_page_load_timeout(15)
+            driver.set_page_load_timeout(25)
             driver.get(url)
-            time.sleep(6)
+            time.sleep(8)                    # 给页面充分加载时间
 
             screenshot_path = f"screenshots/{hashlib.md5(url.encode()).hexdigest()}.png"
             os.makedirs("screenshots", exist_ok=True)
@@ -202,6 +201,8 @@ class MultiModalDetector:
 
             html = driver.page_source
             driver.quit()
+
+            # ... 后面原来的 url_result、html_result、visual_result 计算代码保持不变 ...
 
             url_result = self.url_feature_score(url)
             html_result = self.html_feature_score(html)
@@ -223,8 +224,9 @@ class MultiModalDetector:
             }
 
         except Exception as e:
-            print("检测异常:", str(e))
-            return {"is_phishing": False, "final_score": 0.0, "error": str(e)}
+            print("检测异常（可能是无法连接）:", str(e))
+            # 返回特殊标记，让主界面显示“无效网站”
+            return {"error": str(e)}
 
 
 # ====================== 主界面 ======================
@@ -269,24 +271,26 @@ class PhishingDetectorApp(QMainWindow):
         if not url:
             QMessageBox.warning(self, "提示", "请输入URL")
             return
-        if not url.startswith("http"):
+        if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
         self.result_area.setText("检测中，请稍候...")
         QApplication.processEvents()
 
+        # 黑名单优先检查
         blacklist_result = self.blacklist_manager.is_blacklisted(url)
         if blacklist_result["is_blacklisted"]:
             self.show_danger(blacklist_result["source"], url)
             return
 
-        can_connect = self.check_connectivity(url)
-        if not can_connect:
-            self.show_invalid_website(url)
-            return
-
+        # 直接进入完整检测（只打开一次浏览器）
         result = self.detector.detect(url)
-        self.display_detailed_result(result, url)
+
+        # detect() 内部已经处理了连接失败的情况
+        if result.get("error") or result.get("is_phishing") is None:
+            self.show_invalid_website(url)
+        else:
+            self.display_detailed_result(result, url)
 
     def check_connectivity(self, url: str) -> bool:
         """判断网站是否可以连接（弹出浏览器，和主检测保持一致）"""
