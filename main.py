@@ -12,7 +12,6 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-
 # ====================== 黑名单管理 ======================
 class BlacklistManager:
     def __init__(self, file="blacklist.txt"):
@@ -30,8 +29,26 @@ class BlacklistManager:
             for item in sorted(self.blacklist):
                 f.write(item + '\n')
 
-    def check_online_phishtank(self, url: str) -> bool:
-        """在线PhishTank查询（必须执行）"""
+    def check_online_blacklist(self, url: str) -> bool:
+        """在线黑名单查询（国内优先 + PhishTank备用）"""
+        # 1. 尝试国内接口（更稳定）
+        try:
+            # 360安全中心查询接口（国内访问较稳定）
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(
+                f"https://qir.360.cn/url/analyze?url={url}",
+                headers=headers,
+                timeout=6
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('data', {}).get('is_malicious', False):
+                    print(f"[国内在线黑名单] 360命中: {url}")
+                    return True
+        except:
+            pass
+
+        # 2. PhishTank作为备用
         try:
             response = requests.post(
                 "https://checkurl.phishtank.com/checkurl/",
@@ -44,7 +61,8 @@ class BlacklistManager:
                     print(f"[在线黑名单] PhishTank命中: {url}")
                     return True
         except Exception as e:
-            print(f"[在线黑名单查询失败]: {e}")
+            print(f"[PhishTank查询失败]: {e}")
+
         return False
 
     def is_blacklisted(self, url: str) -> dict:
@@ -55,8 +73,9 @@ class BlacklistManager:
             print(f"[本地黑名单] 命中: {url}")
             return {"is_blacklisted": True, "source": "本地黑名单"}
 
-        if self.check_online_phishtank(url):
-            return {"is_blacklisted": True, "source": "PhishTank在线黑名单"}
+        # 在线查询
+        if self.check_online_blacklist(url):
+            return {"is_blacklisted": True, "source": "在线黑名单"}
 
         return {"is_blacklisted": False, "source": None}
 
@@ -88,7 +107,6 @@ class MultiModalDetector:
         reasons = []
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
-
         if len(domain) > 35 or domain.count('.') > 4:
             score += 0.4
             reasons.append("域名过长或子域名过多")
@@ -98,7 +116,6 @@ class MultiModalDetector:
         if domain.replace('.', '').isdigit():
             score += 0.45
             reasons.append("使用IP地址代替域名")
-
         return {"score": min(1.0, score), "reasons": reasons}
 
     # ====================== 2. HTML模态特征提取 ======================
@@ -109,7 +126,6 @@ class MultiModalDetector:
         soup = BeautifulSoup(html, 'html.parser')
         score = 0.0
         reasons = []
-
         if len(soup.find_all('form')) >= 1:
             score += 0.25
             reasons.append(f"存在表单 ({len(soup.find_all('form'))}个)")
@@ -127,24 +143,47 @@ class MultiModalDetector:
 
         return {"score": min(1.0, score), "reasons": reasons}
 
-    # ====================== 3. 视觉模态特征提取 (YOLOv8) ======================
-    def visual_feature_score(self, screenshot_path: str) -> float:
-        """3. 视觉模态：使用YOLOv8对网页截图进行分类判断"""
+    # ====================== 3. 视觉模态特征提取 (YOLOv8 多分类) ======================
+    def visual_feature_score(self, screenshot_path: str) -> dict:
+        """3. 视觉模态：使用YOLOv8对网页截图进行分类判断
+        返回分数和具体检测类型（安全网站 / 钓鱼网站 / 赌博 / 诈骗 / 色情 / 恶意诱导下载）"""
         if not self.model:
-            return 0.0
+            return {"score": 0.0, "type": "未知"}
         try:
             results = self.model.predict(screenshot_path, conf=0.5, verbose=False)
-            print(f"【视觉预测结果】: {results[0].probs.data.tolist()}")
-            probs = results[0].probs.data.tolist()
-            return max(probs) if probs else 0.0
+            probs = results[0].probs.data.tolist()   # 假设模型类别顺序为: [safe, phishing, gambling, fraud, porn, malicious]
+
+            # 可疑分数 = phishing + 其他风险类
+            visual_score = probs[1] + probs[2]*0.6 + probs[3]*0.6 + probs[4]*0.6 + probs[5]*0.6
+
+            # 判断具体类型（最高概率的类别）
+            max_idx = probs.index(max(probs))
+            if max_idx == 0:
+                detect_type = "安全网站"
+            elif max_idx == 1:
+                detect_type = "钓鱼网站"
+            elif max_idx == 2:
+                detect_type = "赌博网站"
+            elif max_idx == 3:
+                detect_type = "诈骗网站"
+            elif max_idx == 4:
+                detect_type = "色情网站"
+            elif max_idx == 5:
+                detect_type = "恶意诱导下载"
+            else:
+                detect_type = "未知风险"
+
+            print(f"【视觉预测结果】: {probs} → 类型: {detect_type}")
+
+            return {"score": visual_score, "type": detect_type}
         except Exception as e:
             print("视觉检测异常:", e)
-            return 0.0
+            return {"score": 0.0, "type": "未知"}
 
     def detect(self, url: str):
         try:
             options = Options()
-            # options.add_argument('--headless')   # 已恢复弹出浏览器窗口
+            # options.add_argument('--headless') # 已恢复弹出浏览器窗口
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-dev-shm-usage')
@@ -166,9 +205,9 @@ class MultiModalDetector:
 
             url_result = self.url_feature_score(url)
             html_result = self.html_feature_score(html)
-            visual_score = self.visual_feature_score(screenshot_path)
+            visual_result = self.visual_feature_score(screenshot_path)
 
-            final_score = (url_result["score"] * 0.3) + (html_result["score"] * 0.3) + (visual_score * 0.4)
+            final_score = (url_result["score"] * 0.3) + (html_result["score"] * 0.3) + (visual_result["score"] * 0.4)
             is_phishing = final_score > 0.65
 
             if os.path.exists(screenshot_path):
@@ -179,7 +218,8 @@ class MultiModalDetector:
                 "final_score": final_score,
                 "url_result": url_result,
                 "html_result": html_result,
-                "visual_score": visual_score
+                "visual_score": visual_result["score"],
+                "visual_type": visual_result["type"]
             }
 
         except Exception as e:
@@ -235,38 +275,34 @@ class PhishingDetectorApp(QMainWindow):
         self.result_area.setText("检测中，请稍候...")
         QApplication.processEvents()
 
-        # 黑名单检查
         blacklist_result = self.blacklist_manager.is_blacklisted(url)
         if blacklist_result["is_blacklisted"]:
             self.show_danger(blacklist_result["source"], url)
             return
 
-        # 判断网站是否可以连接（弹出浏览器）
         can_connect = self.check_connectivity(url)
         if not can_connect:
             self.show_invalid_website(url)
             return
 
-        # 多模态检测
         result = self.detector.detect(url)
         self.display_detailed_result(result, url)
 
     def check_connectivity(self, url: str) -> bool:
-        """判断网站是否可以连接（弹出浏览器）"""
+        """判断网站是否可以连接（弹出浏览器，和主检测保持一致）"""
         try:
             options = Options()
-            # options.add_argument('--headless')   # 不使用headless，弹出浏览器
+            # options.add_argument('--headless')   # 去掉headless，和detect方法一致
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--ignore-certificate-errors')
-            options.add_argument(
-                'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
+            options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36')
 
             driver = webdriver.Chrome(options=options)
-            driver.set_page_load_timeout(15)
+            driver.set_page_load_timeout(35)   # 增加超时时间
             driver.get(url)
-            time.sleep(6)  # 等待页面加载
+            time.sleep(20)                      # 增加等待时间，让页面充分加载
             driver.quit()
             return True
         except Exception as e:
@@ -274,7 +310,7 @@ class PhishingDetectorApp(QMainWindow):
             return False
 
     def show_invalid_website(self, url):
-        self.setStyleSheet("background-color: #ff9800;")  # 橙色警告
+        self.setStyleSheet("background-color: #ff9800;")
         text = f"<h2 style='color:orange'>【⚠️ 无效网站】</h2>"
         text += f"<p><b>网址：</b>{url}</p>"
         text += "<p>无法连接该网站，可能不存在或已被屏蔽。</p>"
@@ -288,9 +324,9 @@ class PhishingDetectorApp(QMainWindow):
         self.result_area.setHtml(text)
 
     def display_detailed_result(self, result, url):
-        if result.get("is_phishing"):
+        if result.get("is_phishing") or result.get("visual_type") in ["钓鱼网站", "赌博网站", "诈骗网站", "色情网站", "恶意诱导下载"]:
             color = "red"
-            title = "【⚠️ 危险！钓鱼网站】"
+            title = "【⚠️ 危险网站】"
             self.setStyleSheet("background-color: #ff5252;")
         else:
             color = "green"
@@ -301,26 +337,23 @@ class PhishingDetectorApp(QMainWindow):
         text += f"<p><b>网址：</b>{url}</p>"
         text += f"<p><b>最终综合分数：</b>{result['final_score']:.1%}</p><hr>"
 
-        # ====================== 黑名单查询结果 ======================
         text += "<h3>黑名单查询结果</h3>"
         text += f"<p>本地黑名单：{'命中' if url in self.blacklist_manager.blacklist else '未命中'}</p>"
         text += f"<p>在线黑名单：已查询（未命中）</p><hr>"
 
-        # ====================== 1. URL模态 ======================
         text += "<h3>1. URL特征分析</h3>"
         text += f"<p>可疑分数：{result['url_result']['score']:.1%}</p>"
         if result['url_result']['reasons']:
             text += "<p>原因：" + "、".join(result['url_result']['reasons']) + "</p>"
 
-        # ====================== 2. HTML模态 ======================
         text += "<h3>2. HTML特征分析</h3>"
         text += f"<p>可疑分数：{result['html_result']['score']:.1%}</p>"
         if result['html_result']['reasons']:
             text += "<p>原因：" + "、".join(result['html_result']['reasons']) + "</p>"
 
-        # ====================== 3. 视觉模态 ======================
         text += "<h3>3. 视觉特征分析 (YOLOv8)</h3>"
         text += f"<p>可疑分数：{result['visual_score']:.1%}</p>"
+        text += f"<p><b>检测类型：</b>{result.get('visual_type', '未知')}</p>"
 
         self.result_area.setHtml(text)
 
