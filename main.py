@@ -161,13 +161,13 @@ class MultiModalDetector:
             if max_idx == 0:
                 detect_type = "安全网站"
             elif max_idx == 1:
-                detect_type = "钓鱼网站"
+                detect_type = "色情网站"
             elif max_idx == 2:
-                detect_type = "赌博网站"
+                detect_type = "钓鱼网站"
             elif max_idx == 3:
                 detect_type = "诈骗网站"
             elif max_idx == 4:
-                detect_type = "色情网站"
+                detect_type = "赌博网站"
             elif max_idx == 5:
                 detect_type = "恶意诱导下载"
             else:
